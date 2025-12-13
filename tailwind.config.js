@@ -41,7 +41,7 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        detection: '#FF8C00', // Оранжевый для детекций
+        detection: '#FF8C00',
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -52,4 +52,3 @@ export default {
   },
   plugins: [],
 }
-
