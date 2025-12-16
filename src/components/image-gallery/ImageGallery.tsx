@@ -247,7 +247,17 @@ function ImageThumbnail({imageResult, jobId, onClick}: {
     onClick: () => void
 }) {
     // Используем URL из API если доступен, иначе fallback на старый способ
-    const imageUrl = imageResult.processed_image_url || apiClient.getOutputImage(jobId, imageResult.filename, false)
+    // Преобразуем абсолютные URL в относительные для работы через nginx
+    const getRelativeUrl = (url: string | undefined): string => {
+        if (!url) return apiClient.getOutputImage(jobId, imageResult.filename, false)
+        try {
+            const urlObj = new URL(url)
+            return urlObj.pathname + urlObj.search
+        } catch {
+            return url.startsWith('/') ? url : apiClient.getOutputImage(jobId, imageResult.filename, false)
+        }
+    }
+    const imageUrl = getRelativeUrl(imageResult.processed_image_url) || apiClient.getOutputImage(jobId, imageResult.filename, false)
     const [imageLoaded, setImageLoaded] = useState(false)
     const [imageError, setImageError] = useState(false)
 
@@ -409,13 +419,24 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
     }, [selectedImage])
 
     // Получаем URL изображения с учетом showOriginal и наличия URL в API
+    // Преобразуем абсолютные URL в относительные для работы через nginx
+    const getRelativeUrl = useCallback((url: string | undefined, fallback: string): string => {
+        if (!url) return fallback
+        try {
+            const urlObj = new URL(url)
+            return urlObj.pathname + urlObj.search
+        } catch {
+            return url.startsWith('/') ? url : fallback
+        }
+    }, [])
+    
     const getImageUrl = useCallback((imageResult: ImageResult, showOriginal: boolean) => {
         if (showOriginal) {
-            return imageResult.original_image_url || apiClient.getInputImage(currentJobId, imageResult.filename)
+            return getRelativeUrl(imageResult.original_image_url, apiClient.getInputImage(currentJobId, imageResult.filename))
         } else {
-            return imageResult.processed_image_url || apiClient.getOutputImage(currentJobId, imageResult.filename, false)
+            return getRelativeUrl(imageResult.processed_image_url, apiClient.getOutputImage(currentJobId, imageResult.filename, false))
         }
-    }, [currentJobId])
+    }, [currentJobId, getRelativeUrl])
 
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {

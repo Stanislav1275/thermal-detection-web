@@ -38,12 +38,13 @@ export const apiClient = {
     deleteJob: (jobId: string) =>
         api.delete<void>(`/api/jobs/${jobId}`),
 
-    getInputImage: (jobId: string, filename: string) =>
-        `${API_BASE_URL}/api/jobs/${jobId}/input/${filename}`,
+    getInputImage: (jobId: string, filename: string) => {
+        return `/api/jobs/${jobId}/input/${filename}`;
+    },
 
     getOutputImage: (jobId: string, filename: string, original: boolean = false) => {
         const params = original ? '?original=true' : '';
-        return `${API_BASE_URL}/api/jobs/${jobId}/output/${filename}${params}`;
+        return `/api/jobs/${jobId}/output/${filename}${params}`;
     },
 
     downloadJobResults: (jobId: string, options: {
