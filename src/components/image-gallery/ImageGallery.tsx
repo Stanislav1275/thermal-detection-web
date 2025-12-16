@@ -14,32 +14,43 @@ import {cn} from '@/lib/utils'
 import {AlertCircle, ChevronLeft, ChevronRight, Eye, EyeOff, Filter, ImageIcon, X} from 'lucide-react'
 import type {Detection} from '@/types/api'
 
-function DetectionOverlay({detections, imageElement, naturalWidth, naturalHeight}: {
+function DetectionOverlay({detections, imageElement, naturalWidth, naturalHeight, containerElement}: {
     detections: Detection[];
     imageElement: HTMLImageElement | null;
     naturalWidth: number;
-    naturalHeight: number
+    naturalHeight: number;
+    containerElement: HTMLElement | null;
 }) {
-    if (!imageElement) return null
+    if (!imageElement || !containerElement) return null
 
     // Получаем реальные размеры отображаемого изображения
-    const displayWidth = imageElement.offsetWidth
-    const displayHeight = imageElement.offsetHeight
-    
+    const imgRect = imageElement.getBoundingClientRect()
+    const containerRect = containerElement.getBoundingClientRect()
+
+    // Реальные размеры отображаемого изображения
+    const displayWidth = imgRect.width
+    const displayHeight = imgRect.height
+
     // Вычисляем масштаб для object-contain
     const scaleX = displayWidth / naturalWidth
     const scaleY = displayHeight / naturalHeight
     const scale = Math.min(scaleX, scaleY)
-    
-    // Вычисляем смещение для центрирования
-    const offsetX = (displayWidth - naturalWidth * scale) / 2
-    const offsetY = (displayHeight - naturalHeight * scale) / 2
+
+    // Вычисляем смещение изображения относительно контейнера
+    const imgOffsetX = imgRect.left - containerRect.left
+    const imgOffsetY = imgRect.top - containerRect.top
+
+    // Вычисляем смещение для центрирования (если изображение меньше контейнера)
+    const scaledWidth = naturalWidth * scale
+    const scaledHeight = naturalHeight * scale
+    const offsetX = imgOffsetX + (displayWidth - scaledWidth) / 2
+    const offsetY = imgOffsetY + (displayHeight - scaledHeight) / 2
 
     return (
         <div className="absolute inset-0 pointer-events-none">
             {detections.map((detection, index) => {
                 const [x1, y1, x2, y2] = detection.bbox
-                
+
                 // Преобразуем координаты из натуральных размеров в отображаемые
                 const left = offsetX + x1 * scale
                 const top = offsetY + y1 * scale
@@ -57,7 +68,8 @@ function DetectionOverlay({detections, imageElement, naturalWidth, naturalHeight
                             height: `${height}px`,
                         }}
                     >
-                        <div className="absolute -top-6 left-0 bg-detection text-white text-xs px-1.5 py-0.5 rounded shadow-sm">
+                        <div
+                            className="absolute -top-6 left-0 bg-detection text-white text-xs px-1.5 py-0.5 rounded shadow-sm">
                             {detection.class_name || 'person'} {(detection.confidence * 100).toFixed(0)}%
                         </div>
                     </div>
@@ -73,31 +85,90 @@ function DetectionCrop({detection, imageUrl, naturalWidth, naturalHeight}: {
     naturalWidth: number;
     naturalHeight: number
 }) {
-    const [x1, y1, x2, y2] = detection.bbox
-    const width = x2 - x1
-    const height = y2 - y1
-    
-    // Вычисляем проценты для CSS background-position и background-size
-    const leftPercent = (x1 / naturalWidth) * 100
-    const topPercent = (y1 / naturalHeight) * 100
-    const widthPercent = (width / naturalWidth) * 100
-    const heightPercent = (height / naturalHeight) * 100
+    const [croppedImageUrl, setCroppedImageUrl] = useState<string | null>(null)
+    const [isLoading, setIsLoading] = useState(true)
+    const [error, setError] = useState(false)
 
-    // Масштабируем background так, чтобы показать только нужную область
-    const scaleX = 100 / widthPercent
-    const scaleY = 100 / heightPercent
+    useEffect(() => {
+        const cropImage = async () => {
+            setIsLoading(true)
+            setError(false)
+
+            try {
+                const [x1, y1, x2, y2] = detection.bbox
+                const padding = 30
+
+                // Вычисляем координаты с отступами, не выходя за границы изображения
+                const cropX = Math.max(0, x1 - padding)
+                const cropY = Math.max(0, y1 - padding)
+                const cropWidth = Math.min(naturalWidth - cropX, x2 - cropX + padding)
+                const cropHeight = Math.min(naturalHeight - cropY, y2 - cropY + padding)
+
+                // Загружаем изображение
+                const img = new Image()
+                img.crossOrigin = 'anonymous'
+
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve
+                    img.onerror = reject
+                    img.src = imageUrl
+                })
+
+                // Создаем canvas для обрезки
+                const canvas = document.createElement('canvas')
+                canvas.width = cropWidth
+                canvas.height = cropHeight
+                const ctx = canvas.getContext('2d')
+
+                if (!ctx) {
+                    throw new Error('Не удалось получить контекст canvas')
+                }
+
+                // Рисуем обрезанную часть изображения
+                ctx.drawImage(
+                    img,
+                    cropX, cropY, cropWidth, cropHeight, // source rectangle
+                    0, 0, cropWidth, cropHeight // destination rectangle
+                )
+
+                // Преобразуем canvas в data URL
+                const dataUrl = canvas.toDataURL('image/png')
+                setCroppedImageUrl(dataUrl)
+            } catch (err) {
+                console.error('Ошибка при обрезке изображения:', err)
+                setError(true)
+            } finally {
+                setIsLoading(false)
+            }
+        }
+
+        cropImage()
+    }, [detection, imageUrl, naturalWidth, naturalHeight])
+
+    if (isLoading) {
+        return (
+            <div
+                className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden border border-border/50 flex items-center justify-center">
+                <div className="animate-pulse text-muted-foreground text-sm">Загрузка...</div>
+            </div>
+        )
+    }
+
+    if (error || !croppedImageUrl) {
+        return (
+            <div
+                className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden border border-border/50 flex items-center justify-center">
+                <div className="text-destructive text-sm">Ошибка загрузки</div>
+            </div>
+        )
+    }
 
     return (
         <div className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden border border-border/50">
             <img
-                src={imageUrl}
+                src={croppedImageUrl}
                 alt={`Crop: ${detection.class_name || 'person'}`}
-                className="absolute inset-0 w-full h-full object-none"
-                style={{
-                    objectPosition: `${-leftPercent * scaleX}% ${-topPercent * scaleY}%`,
-                    width: `${scaleX * 100}%`,
-                    height: `${scaleY * 100}%`,
-                }}
+                className="w-full h-full object-contain"
             />
         </div>
     )
@@ -167,7 +238,7 @@ function ImageThumbnail({imageResult, jobId, onClick}: {
 }
 
 function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
-    
+
     const {data: jobResults, isLoading} = useJobResults(currentJobId)
 
     const [selectedImage, setSelectedImage] = useState<{
@@ -178,10 +249,11 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
 
     const [selectedImageDimensions, setSelectedImageDimensions] = useState({width: 0, height: 0})
     const [selectedImageElement, setSelectedImageElement] = useState<HTMLImageElement | null>(null)
+    const [selectedImageContainer, setSelectedImageContainer] = useState<HTMLElement | null>(null)
     const [selectedImageError, setSelectedImageError] = useState(false)
     const [detectionsPage, setDetectionsPage] = useState(1)
 
-    const [filter, setFilter] = useState<'all' | 'with-detections' | 'without-detections'>('all')
+    const [filter, setFilter] = useState<'all' | 'with-detections' | 'without-detections'>('with-detections')
 
     const [searchQuery, setSearchQuery] = useState('')
 
@@ -361,8 +433,8 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                 )}
                             </CardDescription>
                         </div>
-                <div className="flex flex-col sm:flex-row gap-2 min-w-0 sm:min-w-[260px]">
-                  <div className="relative min-w-0 flex-1 sm:flex-initial">
+                        <div className="flex flex-col sm:flex-row gap-2 min-w-0 sm:min-w-[260px]">
+                            <div className="relative min-w-0 flex-1 sm:flex-initial">
                                 <Input
                                     placeholder="Поиск..."
                                     value={searchQuery}
@@ -386,9 +458,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                     <SelectValue/>
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="all">Все</SelectItem>
                                     <SelectItem value="with-detections">С детекциями</SelectItem>
-                                    <SelectItem value="without-detections">Без детекций</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -452,24 +522,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                         <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full"/>
                                         Без детекций ({imagesWithoutDetections.length})
                                     </h3>
-                                    <div
-                                        className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 w-full min-w-0">
-                                        {imagesWithoutDetections.map((imageResult, index) => (
-                                            <ImageThumbnail
-                                                key={`${imageResult.filename}-${index}`}
-                                                imageResult={imageResult}
-                                                jobId={currentJobId}
-                                                onClick={() => {
-                                                    const globalIndex = allImages.findIndex(img => img.filename === imageResult.filename)
-                                                    setSelectedImage({
-                                                        filename: imageResult.filename,
-                                                        detections: [],
-                                                        index: globalIndex
-                                                    })
-                                                }}
-                                            />
-                                        ))}
-                                    </div>
+
                                 </div>
                             )}
 
@@ -569,6 +622,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                             </DialogHeader>
                             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 relative bg-background">
                                 <div
+                                    ref={(el) => setSelectedImageContainer(el)}
                                     className="relative border border-border/50 rounded-lg overflow-hidden bg-muted/30 flex items-center justify-center min-h-[400px]">
                                     {allImages.length > 1 && (
                                         <>
@@ -630,6 +684,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                                     imageElement={selectedImageElement}
                                                     naturalWidth={selectedImageDimensions.width}
                                                     naturalHeight={selectedImageDimensions.height}
+                                                    containerElement={selectedImageContainer}
                                                 />
                                             )}
                                         </>
@@ -650,7 +705,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                                         disabled={detectionsPage === 1}
                                                         className="h-8"
                                                     >
-                                                        <ChevronLeft className="h-4 w-4" />
+                                                        <ChevronLeft className="h-4 w-4"/>
                                                     </Button>
                                                     <span className="text-sm text-muted-foreground">
                                                         {detectionsPage} / {totalDetectionsPages}
@@ -662,7 +717,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                                         disabled={detectionsPage === totalDetectionsPages}
                                                         className="h-8"
                                                     >
-                                                        <ChevronRight className="h-4 w-4" />
+                                                        <ChevronRight className="h-4 w-4"/>
                                                     </Button>
                                                 </div>
                                             )}

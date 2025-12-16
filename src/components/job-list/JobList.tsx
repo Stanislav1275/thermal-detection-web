@@ -13,7 +13,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale/ru'
-import { FileText, Clock as ClockIcon, Search, X, Trash2, Loader2 } from 'lucide-react'
+import { FileText, Clock as ClockIcon, Search, X, Trash2, Loader2, CheckSquare, Square } from 'lucide-react'
 
 function getStatusVariant(status: string) {
   switch (status) {
@@ -54,6 +54,10 @@ export function JobList() {
   const activeJobId = urlJobId || currentJobId
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'processing' | 'queued' | 'failed'>('all')
+  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set())
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const deleteJobMutation = useDeleteJob()
+  const { toast } = useToast()
 
   const filteredJobs = useMemo(() => {
     if (!jobs) return []
@@ -71,6 +75,52 @@ export function JobList() {
       return true
     })
   }, [jobs, searchQuery, filterStatus])
+
+  const allFilteredSelected = filteredJobs.length > 0 && filteredJobs.every(job => selectedJobs.has(job.job_id))
+  const someFilteredSelected = filteredJobs.some(job => selectedJobs.has(job.job_id))
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedJobs(new Set(filteredJobs.map(job => job.job_id)))
+    } else {
+      const filteredIds = new Set(filteredJobs.map(job => job.job_id))
+      setSelectedJobs(prev => new Set([...prev].filter(id => !filteredIds.has(id))))
+    }
+  }
+
+  const handleSelectJob = (jobId: string, checked: boolean) => {
+    setSelectedJobs(prev => {
+      const next = new Set(prev)
+      if (checked) {
+        next.add(jobId)
+      } else {
+        next.delete(jobId)
+      }
+      return next
+    })
+  }
+
+  const handleDeleteSelected = async () => {
+    if (selectedJobs.size === 0) return
+
+    try {
+      const jobsToDelete = Array.from(selectedJobs)
+      await Promise.all(jobsToDelete.map(jobId => deleteJobMutation.mutateAsync(jobId)))
+      
+      toast({
+        title: 'Успешно',
+        description: `Удалено задач: ${selectedJobs.size}`,
+      })
+      setSelectedJobs(new Set())
+      setDeleteDialogOpen(false)
+    } catch (error: any) {
+      toast({
+        title: 'Ошибка',
+        description: error.response?.data?.detail || 'Не удалось удалить задачи',
+        variant: 'destructive',
+      })
+    }
+  }
 
   if (isLoading) {
     return (
@@ -118,6 +168,51 @@ export function JobList() {
           )}
         </div>
 
+        {/* Selection Controls */}
+        {filteredJobs.length > 0 && (
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-sidebar-border">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleSelectAll(!allFilteredSelected)}
+                className="flex items-center gap-2 text-sm text-sidebar-foreground hover:text-sidebar-foreground/80 transition-colors"
+                aria-label={allFilteredSelected ? 'Снять выделение со всех' : 'Выбрать все'}
+              >
+                {allFilteredSelected ? (
+                  <CheckSquare className="h-4 w-4 text-primary" />
+                ) : someFilteredSelected ? (
+                  <div className="h-4 w-4 border-2 border-primary rounded-sm bg-primary/20" />
+                ) : (
+                  <Square className="h-4 w-4 text-sidebar-foreground/70" />
+                )}
+                <span className="text-xs font-medium">
+                  {selectedJobs.size > 0 ? `Выбрано: ${selectedJobs.size}` : 'Выбрать все'}
+                </span>
+              </button>
+            </div>
+            {selectedJobs.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setDeleteDialogOpen(true)}
+                disabled={deleteJobMutation.isPending}
+                className="h-7 text-xs gap-1.5"
+              >
+                {deleteJobMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Удаление...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3 w-3" />
+                    Удалить ({selectedJobs.size})
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* Filter Tabs */}
         {jobs && jobs.length > 3 && (
           <Tabs value={filterStatus} onValueChange={(v) => setFilterStatus(v as any)}>
@@ -143,6 +238,8 @@ export function JobList() {
                     key={job.job_id}
                     job={job}
                     isActive={job.job_id === activeJobId}
+                    isSelected={selectedJobs.has(job.job_id)}
+                    onSelect={(checked) => handleSelectJob(job.job_id, checked)}
                     onFocus={()=>navigate(`/job/${job.job_id}`)}
                     onClick={() => navigate(`/job/${job.job_id}`)}
                   />
@@ -150,13 +247,57 @@ export function JobList() {
             </>
           )}
         </div>
+
+        {/* Delete Selected Dialog */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Удалить выбранные задачи?</DialogTitle>
+              <DialogDescription>
+                Вы уверены, что хотите удалить {selectedJobs.size} {selectedJobs.size === 1 ? 'задачу' : 'задач'}?
+                <span className="block mt-2 text-destructive font-medium">
+                  Внимание: все результаты будут удалены безвозвратно.
+                </span>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={deleteJobMutation.isPending}
+              >
+                Отмена
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteSelected}
+                disabled={deleteJobMutation.isPending}
+                className="gap-2"
+              >
+                {deleteJobMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Удаление...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Удалить ({selectedJobs.size})
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </div>
   )
 }
 
-function JobListItem({ job, isActive, onClick }: { 
+function JobListItem({ job, isActive, isSelected, onSelect, onClick }: { 
   job: { job_id: string; status: string; total_images: number; processed_images: number; images_with_detections: number; created_at: string; name?: string | null }
   isActive: boolean
+  isSelected: boolean
+  onSelect: (checked: boolean) => void
   onClick: () => void
 } & ComponentProps<'div'>) {
   const deleteJobMutation = useDeleteJob()
@@ -212,6 +353,20 @@ function JobListItem({ job, isActive, onClick }: {
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect(!isSelected)
+            }}
+            className="flex-shrink-0 h-4 w-4 flex items-center justify-center text-primary hover:text-primary/80 transition-colors"
+            aria-label={isSelected ? 'Снять выделение' : 'Выбрать'}
+          >
+            {isSelected ? (
+              <CheckSquare className="h-4 w-4" />
+            ) : (
+              <Square className="h-4 w-4 text-sidebar-foreground/70" />
+            )}
+          </button>
           <code className="text-xs font-mono bg-sidebar-accent px-2 py-1 rounded font-semibold text-sidebar-foreground flex-shrink-0">
             {job.job_id.slice(0, 8)}...
           </code>
