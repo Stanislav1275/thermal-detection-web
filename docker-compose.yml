@@ -10,33 +10,6 @@ services:
       - "3000:80"
     environment:
       - VITE_API_URL=http://localhost:8000
-    depends_on:
-      - backend
-    networks:
-      - thermal-detection-network
     restart: unless-stopped
-
-  backend:
-    # Замените на ваш бэкенд образ или используйте готовый
-    # Если бэкенд уже запущен отдельно, закомментируйте этот сервис
-    image: your-backend-image:latest
-    container_name: thermal-detection-backend
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend-data:/app/data
-      - ./backend-uploads:/app/uploads
-    environment:
-      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-    networks:
-      - thermal-detection-network
-    restart: unless-stopped
-
-networks:
-  thermal-detection-network:
-    driver: bridge
-
-volumes:
-  backend-data:
-  backend-uploads:
+    # Ожидает, что бэкенд запущен отдельно на localhost:8000
 
