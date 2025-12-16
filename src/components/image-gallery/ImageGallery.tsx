@@ -12,7 +12,7 @@ import {Button} from '@/components/ui/button'
 import {Input} from '@/components/ui/input'
 import {cn} from '@/lib/utils'
 import {AlertCircle, ChevronLeft, ChevronRight, Eye, EyeOff, Filter, ImageIcon, X} from 'lucide-react'
-import type {Detection} from '@/types/api'
+import type {Detection, ImageResult} from '@/types/api'
 
 function DetectionOverlay({detections, imageElement, naturalWidth, naturalHeight, containerElement}: {
     detections: Detection[];
@@ -69,7 +69,7 @@ function DetectionOverlay({detections, imageElement, naturalWidth, naturalHeight
                         }}
                     >
                         <div
-                            className="absolute -top-6 left-0 bg-detection text-white text-xs px-1.5 py-0.5 rounded shadow-sm">
+                            className="absolute -top-7 left-0 text-detection text-xs font-semibold whitespace-nowrap drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
                             {detection.class_name || 'person'} {(detection.confidence * 100).toFixed(0)}%
                         </div>
                     </div>
@@ -93,47 +93,114 @@ function DetectionCrop({detection, imageUrl, naturalWidth, naturalHeight}: {
         const cropImage = async () => {
             setIsLoading(true)
             setError(false)
-
+            
             try {
                 const [x1, y1, x2, y2] = detection.bbox
                 const padding = 30
-
+                
                 // Вычисляем координаты с отступами, не выходя за границы изображения
                 const cropX = Math.max(0, x1 - padding)
                 const cropY = Math.max(0, y1 - padding)
                 const cropWidth = Math.min(naturalWidth - cropX, x2 - cropX + padding)
                 const cropHeight = Math.min(naturalHeight - cropY, y2 - cropY + padding)
-
-                // Загружаем изображение
+                
+                // Преобразуем абсолютный URL в относительный для использования через прокси Vite
+                const getProxiedUrl = (url: string): string => {
+                    try {
+                        const urlObj = new URL(url)
+                        // Если URL содержит localhost:8000, заменяем на относительный путь через прокси
+                        if (urlObj.origin.includes('localhost:8000') || urlObj.origin.includes('127.0.0.1:8000')) {
+                            return urlObj.pathname + urlObj.search
+                        }
+                        return url
+                    } catch {
+                        // Если это уже относительный путь, возвращаем как есть
+                        return url
+                    }
+                }
+                
+                const proxiedUrl = getProxiedUrl(imageUrl)
+                
+                // Загружаем изображение через fetch для обхода CORS
+                let imageBlob: Blob
+                try {
+                    const response = await fetch(proxiedUrl, {
+                        mode: 'cors',
+                        credentials: 'omit',
+                    })
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`)
+                    }
+                    imageBlob = await response.blob()
+                } catch (fetchError) {
+                    // Если fetch не работает, пробуем напрямую через Image с crossOrigin
+                    const img = new Image()
+                    img.crossOrigin = 'anonymous'
+                    
+                    await new Promise((resolve, reject) => {
+                        img.onload = resolve
+                        img.onerror = () => {
+                            reject(new Error('CORS blocked'))
+                        }
+                        img.src = proxiedUrl
+                    })
+                    
+                    // Если Image загрузился успешно, используем его
+                    const canvas = document.createElement('canvas')
+                    canvas.width = cropWidth
+                    canvas.height = cropHeight
+                    const ctx = canvas.getContext('2d')
+                    
+                    if (!ctx) {
+                        throw new Error('Не удалось получить контекст canvas')
+                    }
+                    
+                    ctx.drawImage(
+                        img,
+                        cropX, cropY, cropWidth, cropHeight,
+                        0, 0, cropWidth, cropHeight
+                    )
+                    
+                    const dataUrl = canvas.toDataURL('image/png')
+                    setCroppedImageUrl(dataUrl)
+                    setIsLoading(false)
+                    return
+                }
+                
+                // Создаем blob URL из загруженного изображения
+                const blobUrl = URL.createObjectURL(imageBlob)
                 const img = new Image()
-                img.crossOrigin = 'anonymous'
-
+                
                 await new Promise((resolve, reject) => {
                     img.onload = resolve
                     img.onerror = reject
-                    img.src = imageUrl
+                    img.src = blobUrl
                 })
-
+                
                 // Создаем canvas для обрезки
                 const canvas = document.createElement('canvas')
                 canvas.width = cropWidth
                 canvas.height = cropHeight
                 const ctx = canvas.getContext('2d')
-
+                
                 if (!ctx) {
+                    URL.revokeObjectURL(blobUrl)
                     throw new Error('Не удалось получить контекст canvas')
                 }
-
+                
                 // Рисуем обрезанную часть изображения
                 ctx.drawImage(
                     img,
                     cropX, cropY, cropWidth, cropHeight, // source rectangle
                     0, 0, cropWidth, cropHeight // destination rectangle
                 )
-
+                
                 // Преобразуем canvas в data URL
                 const dataUrl = canvas.toDataURL('image/png')
                 setCroppedImageUrl(dataUrl)
+                
+                // Освобождаем blob URL
+                URL.revokeObjectURL(blobUrl)
             } catch (err) {
                 console.error('Ошибка при обрезке изображения:', err)
                 setError(true)
@@ -175,11 +242,12 @@ function DetectionCrop({detection, imageUrl, naturalWidth, naturalHeight}: {
 }
 
 function ImageThumbnail({imageResult, jobId, onClick}: {
-    imageResult: { filename: string; detections: Detection[]; success: boolean };
+    imageResult: ImageResult;
     jobId: string;
     onClick: () => void
 }) {
-    const imageUrl = apiClient.getOutputImage(jobId, imageResult.filename, false)
+    // Используем URL из API если доступен, иначе fallback на старый способ
+    const imageUrl = imageResult.processed_image_url || apiClient.getOutputImage(jobId, imageResult.filename, false)
     const [imageLoaded, setImageLoaded] = useState(false)
     const [imageError, setImageError] = useState(false)
 
@@ -242,8 +310,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
     const {data: jobResults, isLoading} = useJobResults(currentJobId)
 
     const [selectedImage, setSelectedImage] = useState<{
-        filename: string;
-        detections: Detection[];
+        imageResult: ImageResult;
         index: number
     } | null>(null)
 
@@ -292,7 +359,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
             return selectedImage.index
         }
         // Fallback: ищем по filename
-        return allImages.findIndex(img => img.filename === selectedImage.filename)
+        return allImages.findIndex(img => img.filename === selectedImage.imageResult.filename)
     }, [selectedImage, allImages])
 
     const navigateImage = useCallback((direction: 'prev' | 'next') => {
@@ -311,8 +378,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
         const newImage = allImages[newIndex]
         if (newImage) {
             setSelectedImage({
-                filename: newImage.filename,
-                detections: newImage.detections,
+                imageResult: newImage,
                 index: newIndex
             })
             setSelectedImageError(false)
@@ -327,20 +393,29 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
     // Reset detections page when selected image changes
     useEffect(() => {
         setDetectionsPage(1)
-    }, [selectedImage?.filename])
+    }, [selectedImage?.imageResult.filename])
 
     const DETECTIONS_PER_PAGE = 10
     const paginatedDetections = useMemo(() => {
         if (!selectedImage) return []
         const start = (detectionsPage - 1) * DETECTIONS_PER_PAGE
         const end = start + DETECTIONS_PER_PAGE
-        return selectedImage.detections.slice(start, end)
+        return selectedImage.imageResult.detections.slice(start, end)
     }, [selectedImage, detectionsPage])
 
     const totalDetectionsPages = useMemo(() => {
         if (!selectedImage) return 0
-        return Math.ceil(selectedImage.detections.length / DETECTIONS_PER_PAGE)
+        return Math.ceil(selectedImage.imageResult.detections.length / DETECTIONS_PER_PAGE)
     }, [selectedImage])
+
+    // Получаем URL изображения с учетом showOriginal и наличия URL в API
+    const getImageUrl = useCallback((imageResult: ImageResult, showOriginal: boolean) => {
+        if (showOriginal) {
+            return imageResult.original_image_url || apiClient.getInputImage(currentJobId, imageResult.filename)
+        } else {
+            return imageResult.processed_image_url || apiClient.getOutputImage(currentJobId, imageResult.filename, false)
+        }
+    }, [currentJobId])
 
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -505,8 +580,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                                 onClick={() => {
                                                     const globalIndex = allImages.findIndex(img => img.filename === imageResult.filename)
                                                     setSelectedImage({
-                                                        filename: imageResult.filename,
-                                                        detections: imageResult.detections,
+                                                        imageResult: imageResult,
                                                         index: globalIndex
                                                     })
                                                 }}
@@ -560,10 +634,10 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                 <div className="flex items-center justify-between">
                                     <div className="flex-1 min-w-0">
                                         <DialogTitle
-                                            className="text-xl truncate text-foreground">{selectedImage.filename}</DialogTitle>
+                                            className="text-xl truncate text-foreground">{selectedImage.imageResult.filename}</DialogTitle>
                                         <DialogDescription className="text-muted-foreground">
-                                            {selectedImage.detections.length > 0
-                                                ? `${selectedImage.detections.length} детекций найдено`
+                                            {selectedImage.imageResult.detections.length > 0
+                                                ? `${selectedImage.imageResult.detections.length} детекций найдено`
                                                 : 'Детекции не найдены'}
                                             {allImages.length > 1 && currentImageIndex >= 0 && (
                                                 <span className="ml-2 text-muted-foreground">
@@ -651,7 +725,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                             <AlertCircle className="h-12 w-12 text-destructive mb-4"/>
                                             <p className="text-lg font-semibold text-destructive mb-2">Ошибка загрузки
                                                 изображения</p>
-                                            <p className="text-sm text-muted-foreground mb-1">{selectedImage.filename}</p>
+                                            <p className="text-sm text-muted-foreground mb-1">{selectedImage.imageResult.filename}</p>
                                             <p className="text-xs text-muted-foreground">Возможно, файл поврежден или не
                                                 может быть обработан сервером</p>
                                             <p className="text-xs text-muted-foreground mt-2">Ошибка бэкенда: &quot;need
@@ -661,8 +735,8 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                         <>
                                             <img
                                                 ref={(img) => setSelectedImageElement(img)}
-                                                src={apiClient.getOutputImage(currentJobId, selectedImage.filename, showOriginal)}
-                                                alt={selectedImage.filename}
+                                                src={getImageUrl(selectedImage.imageResult, showOriginal)}
+                                                alt={selectedImage.imageResult.filename}
                                                 className="max-w-full max-h-[60vh] w-auto h-auto object-contain"
                                                 onLoad={(e) => {
                                                     const img = e.currentTarget
@@ -678,9 +752,9 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                             />
                                             {/* Рисуем bounding boxes только на оригинальном изображении */}
                                             {/* На обработанном изображении bounding boxes уже нарисованы на сервере */}
-                                            {showOriginal && selectedImage.detections.length > 0 && selectedImageDimensions.width > 0 && !selectedImageError && (
+                                            {showOriginal && selectedImage.imageResult.detections.length > 0 && selectedImageDimensions.width > 0 && !selectedImageError && (
                                                 <DetectionOverlay
-                                                    detections={selectedImage.detections}
+                                                    detections={selectedImage.imageResult.detections}
                                                     imageElement={selectedImageElement}
                                                     naturalWidth={selectedImageDimensions.width}
                                                     naturalHeight={selectedImageDimensions.height}
@@ -690,11 +764,11 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                         </>
                                     )}
                                 </div>
-                                {selectedImage.detections.length > 0 && (
+                                {selectedImage.imageResult.detections.length > 0 && (
                                     <div className="space-y-3 pt-4 border-t border-border/50 bg-background">
                                         <div className="flex items-center justify-between">
                                             <h4 className="font-semibold text-lg text-foreground">
-                                                Детекции: {selectedImage.detections.length}
+                                                Детекции: {selectedImage.imageResult.detections.length}
                                             </h4>
                                             {totalDetectionsPages > 1 && (
                                                 <div className="flex items-center gap-2">
@@ -739,7 +813,7 @@ function ImageGalleryContent({currentJobId}: { currentJobId: string }) {
                                                         </div>
                                                         <DetectionCrop
                                                             detection={detection}
-                                                            imageUrl={apiClient.getOutputImage(currentJobId, selectedImage.filename, showOriginal)}
+                                                            imageUrl={getImageUrl(selectedImage.imageResult, showOriginal)}
                                                             naturalWidth={selectedImageDimensions.width}
                                                             naturalHeight={selectedImageDimensions.height}
                                                         />

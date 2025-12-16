@@ -42,7 +42,7 @@ export function AppSidebar() {
             <SidebarContent className="overflow-x-hidden min-w-0">
                 <SidebarGroup className="min-w-0">
                     <SidebarGroupLabel>Задачи</SidebarGroupLabel>
-                    <SidebarGroupContent className={cn("min-w-0 overflow-x-hidden", isCollapsed && "hidden")}>
+                    <SidebarGroupContent className={cn("min-w-0  overflow-x-hidden", isCollapsed && "hidden")}>
                         <JobList/>
                     </SidebarGroupContent>
                 </SidebarGroup>

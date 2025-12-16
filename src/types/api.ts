@@ -9,6 +9,9 @@ export interface ImageResult {
   detections: Detection[];
   success: boolean;
   error?: string | null;
+  original_image_url?: string;
+  processed_image_url?: string;
+  total_detections?: number;
 }
 
 export interface JobStatus {
