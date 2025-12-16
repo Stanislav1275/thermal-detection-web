@@ -8,8 +8,6 @@ services:
     container_name: thermal-detection-frontend
     ports:
       - "3000:80"
-    environment:
-      - VITE_API_URL=http://localhost:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
-    # Ожидает, что бэкенд запущен отдельно на localhost:8000
-
