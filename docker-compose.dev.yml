@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: thermal-detection-frontend-dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    command: npm run dev -- --host 0.0.0.0
+    networks:
+      - thermal-detection-network
+    restart: unless-stopped
+
+  backend:
+    # Замените на ваш бэкенд образ или используйте готовый
+    # Если бэкенд уже запущен отдельно, закомментируйте этот сервис
+    image: your-backend-image:latest
+    container_name: thermal-detection-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-data:/app/data
+      - ./backend-uploads:/app/uploads
+    environment:
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+    networks:
+      - thermal-detection-network
+    restart: unless-stopped
+
+networks:
+  thermal-detection-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+  backend-uploads:
+
