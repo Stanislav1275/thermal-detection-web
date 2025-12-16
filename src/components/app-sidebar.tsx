@@ -13,11 +13,9 @@ import {
     useSidebar,
 } from '@/components/ui/sidebar'
 import {JobList} from '@/components/job-list/JobList'
-import {useJobStore} from '@/store/jobStore'
 import {cn} from '@/lib/utils'
 
 export function AppSidebar() {
-    const {currentJobId} = useJobStore()
     const {state} = useSidebar()
     const isCollapsed = state === 'collapsed'
 
