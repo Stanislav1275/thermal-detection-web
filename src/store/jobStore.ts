@@ -8,6 +8,7 @@ interface JobStore {
   addToHistory: (id: string) => void;
   jobStatuses: Record<string, JobStatus>;
   setJobStatus: (jobId: string, status: JobStatus) => void;
+  removeJobStatus: (jobId: string) => void;
 }
 
 export const useJobStore = create<JobStore>((set) => ({
@@ -29,5 +30,9 @@ export const useJobStore = create<JobStore>((set) => ({
       [jobId]: status,
     },
   })),
+  removeJobStatus: (jobId) => set((state) => {
+    const { [jobId]: removed, ...rest } = state.jobStatuses;
+    return { jobStatuses: rest };
+  }),
 }));
 

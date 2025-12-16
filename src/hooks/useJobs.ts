@@ -1,7 +1,18 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api';
 import { useJobStore } from '@/store/jobStore';
 import { POLLING_INTERVAL } from '@/lib/constants';
+
+export const useJobsList = () => {
+  return useQuery({
+    queryKey: ['jobs'],
+    queryFn: async () => {
+      const response = await apiClient.listJobs();
+      return response.data;
+    },
+    refetchInterval: 5000, // Обновляем каждые 5 секунд для получения новых задач
+  });
+};
 
 export const useJobStatus = (jobId: string | null) => {
   const { setJobStatus } = useJobStore();
@@ -35,14 +46,55 @@ export const useJobResults = (jobId: string | null) => {
 };
 
 export const useUpload = () => {
-  const { setCurrentJobId, addToHistory } = useJobStore();
+  const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ files, confidence }: { files: File[]; confidence: number }) =>
-      apiClient.upload(files, confidence).then(r => r.data),
+    mutationFn: ({ files, confidence, name }: { files: File[]; confidence: number; name?: string | null }) =>
+      apiClient.upload(files, confidence, name).then(r => r.data),
     onSuccess: (data) => {
-      setCurrentJobId(data.job_id);
-      addToHistory(data.job_id);
+      // Инвалидируем список задач чтобы получить обновленный список
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      // Навигация будет обработана в компоненте через window.location или navigate
+      window.location.href = `/job/${data.job_id}`;
+    },
+  });
+};
+
+export const useUpdateJobName = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ jobId, name }: { jobId: string; name: string }) =>
+      apiClient.updateJobName(jobId, name).then(r => r.data),
+    onSuccess: (_, variables) => {
+      // Инвалидируем список задач и статус задачи
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['job', variables.jobId] });
+    },
+  });
+};
+
+export const useDeleteJob = () => {
+  const queryClient = useQueryClient();
+  const { currentJobId, removeJobStatus } = useJobStore();
+  
+  return useMutation({
+    mutationFn: (jobId: string) =>
+      apiClient.deleteJob(jobId),
+    onSuccess: (_, jobId) => {
+      // Инвалидируем все связанные queries
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      queryClient.removeQueries({ queryKey: ['job', jobId] });
+      queryClient.removeQueries({ queryKey: ['job-results', jobId] });
+      
+      // Удаляем статус из store
+      removeJobStatus(jobId);
+      
+      // Если удаляется текущая задача, перенаправляем на главную
+      if (currentJobId === jobId) {
+        // Используем window.location для полной перезагрузки и очистки состояния
+        window.location.href = '/';
+      }
     },
   });
 };

@@ -13,13 +13,14 @@ export interface ImageResult {
 
 export interface JobStatus {
   job_id: string;
+  name?: string | null;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   total_images: number;
   processed_images: number;
   images_with_detections: number;
   created_at: string;
   completed_at?: string | null;
-  parameters: {
+  parameters?: {
     confidence_threshold?: number;
     [key: string]: unknown;
   };
